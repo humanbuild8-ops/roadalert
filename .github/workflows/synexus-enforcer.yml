@@ -1,0 +1,27 @@
+name: Synexus Verification Enforcer
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  verify-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Verify Synexus Signature
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if echo "$COMMIT_MSG" | grep -q "\[Synexus-Auth-Code-Verified\]"; then
+            echo "✅ Valid Synexus signature found."
+            exit 0
+          else
+            echo "❌ No Synexus signature found! Did you edit files directly via GitHub?"
+            echo "All commits must be made locally through the Synexus VS Code Extension."
+            exit 1
+          fi

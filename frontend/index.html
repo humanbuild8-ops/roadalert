@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoadAlert — Live Operations Console</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar__mark">
+    <span class="topbar__dot" id="linkDot"></span>
+    <span class="topbar__name">RoadAlert</span>
+    <span class="topbar__route">NH-44 · northbound · km 214</span>
+  </div>
+  <div class="topbar__right">
+    <span class="topbar__mode" id="modeLabel">simulated feed</span>
+    <span class="topbar__clock" id="clock">00:00:00</span>
+  </div>
+</header>
+
+<main class="console">
+
+  <section class="highway-panel">
+    <div class="panel-head">
+      <h1>Highway view</h1>
+      <button class="btn" id="triggerBtn">Report accident now</button>
+    </div>
+
+    <svg id="road" class="road" viewBox="0 0 1000 260" preserveAspectRatio="none" role="img" aria-label="Live highway simulation">
+      <rect x="0" y="0" width="1000" height="260" class="road__surface"/>
+      <g id="alertZone" class="alert-zone" opacity="0"></g>
+      <line x1="0" y1="65"  x2="1000" y2="65"  class="lane-line"/>
+      <line x1="0" y1="130" x2="1000" y2="130" class="lane-line lane-line--dashed"/>
+      <line x1="0" y1="195" x2="1000" y2="195" class="lane-line"/>
+      <path id="divertPath" class="divert-path" d="" opacity="0"/>
+      <g id="cars"></g>
+      <g id="incidentMark" class="incident-mark" opacity="0">
+        <circle r="13" class="incident-mark__ring"/>
+        <circle r="13" class="incident-mark__ring incident-mark__ring--delay"/>
+        <text y="6" text-anchor="middle" class="incident-mark__glyph">!</text>
+      </g>
+    </svg>
+
+    <div class="road__foot">
+      <span><i class="chip chip--amber"></i>detecting vehicle</span>
+      <span><i class="chip chip--steel"></i>alerted vehicle</span>
+      <span><i class="chip chip--red"></i>reported incident</span>
+      <span><i class="chip chip--green"></i>diversion route</span>
+      <span class="road__direction">direction of travel →</span>
+    </div>
+  </section>
+
+  <aside class="log-panel">
+    <div class="panel-head">
+      <h1>Incident log</h1>
+      <span class="panel-head__count" id="logCount">0 today</span>
+    </div>
+    <div class="log" id="log">
+      <p class="log__empty" id="logEmpty">No incidents yet. The console updates the moment a camera reports one.</p>
+    </div>
+  </aside>
+
+  <section class="stats-strip">
+    <div class="stat">
+      <span class="stat__value" id="statActive">0</span>
+      <span class="stat__label">active incidents</span>
+    </div>
+    <div class="stat">
+      <span class="stat__value" id="statVehicles">—</span>
+      <span class="stat__label">vehicles connected</span>
+    </div>
+    <div class="stat">
+      <span class="stat__value" id="statAlerts">0</span>
+      <span class="stat__label">alerts sent today</span>
+    </div>
+    <div class="stat">
+      <span class="stat__value" id="statLatency">—</span>
+      <span class="stat__label">avg. detect-to-alert</span>
+    </div>
+    <div class="stat stat--wide">
+      <span class="stat__label stat__label--top">detections, last 12 hours</span>
+      <svg id="sparkline" class="sparkline" viewBox="0 0 240 46" preserveAspectRatio="none"></svg>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span>Demo console — runs on simulated telemetry until a RoadAlert backend is reachable at <code>ws://localhost:8000/ws/incidents</code>.</span>
+</footer>
+
+<script src="js/app.js"></script>
+</body>
+</html>
