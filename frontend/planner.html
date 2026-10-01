@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoadAlert — Adaptive Planner Simulator</title>
+<style>
+:root{--bg:#0B0D12;--panel:#12151C;--line:#232838;--ink:#E7EAF0;--muted:#7C8494;--amber:#F2A93B;--red:#E23B4E;--green:#2BB673}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px 'Space Grotesk','Segoe UI',Arial,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+header b{font-size:17px}header small{color:var(--muted);margin-left:10px}
+.ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+select,button{background:#1a1f2b;color:var(--ink);border:1px solid var(--line);padding:7px 12px;font:inherit;cursor:pointer}
+button.p{background:var(--amber);color:#111;border-color:var(--amber);font-weight:600}
+main{padding:16px 20px;display:grid;gap:14px;max-width:1100px;margin:auto}
+.pane{background:var(--panel);border:1px solid var(--line)}
+.pane h2{margin:0;padding:10px 14px;font-size:14px;display:flex;justify-content:space-between;gap:10px}
+.pane h2 span{color:var(--muted);font-weight:400}
+canvas{display:block;width:100%;height:auto}
+.m{display:grid;grid-template-columns:repeat(6,1fr);border-top:1px solid var(--line)}
+.m div{padding:8px 12px;border-right:1px solid var(--line)}
+.m b{display:block;font:600 17px 'IBM Plex Mono',Consolas,monospace}
+.m span{color:var(--muted);font-size:11px}
+.bad{color:var(--red)}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:nth-child(-n+2),td:nth-child(-n+2){text-align:left}
+th{color:var(--muted);font-weight:500}
+.note{color:var(--muted);font-size:12px;padding:0 4px}
+@media(max-width:700px){.m{grid-template-columns:repeat(3,1fr)}}
+</style>
+</head>
+<body>
+<header>
+  <div><b>RoadAlert</b><small>Adaptive planning on an unstructured road · same world, two planners</small></div>
+  <div class="ctl">
+    <select id="scn"></select>
+    <select id="spd"><option value="1">1×</option><option value="2">2×</option><option value=".5">0.5×</option></select>
+    <button id="rst">Restart</button>
+    <button id="cmp" class="p">Compare 30 runs</button>
+    <button id="csv">Download CSV</button>
+    <span class="note" id="st"></span>
+  </div>
+</header>
+<main>
+  <section class="pane"><h2>Baseline <span>keeps its line, brakes late</span></h2><canvas id="c0" width="1000" height="240"></canvas><div class="m" id="m0"></div></section>
+  <section class="pane"><h2>Adaptive <span>predicts, class-aware margins, TTC modes, emergency brake</span></h2><canvas id="c1" width="1000" height="240"></canvas><div class="m" id="m1"></div></section>
+  <section class="pane"><h2>Comparison results <span>each row: 30 seeded runs per planner</span></h2>
+    <div class="tw"><table><thead><tr><th>Scenario</th><th>Planner</th><th>Collision runs %</th><th>Min clearance m</th><th>Min TTC s</th><th>Jerk m/s³</th><th>Plan ms</th><th>Goal %</th></tr></thead><tbody id="tb"></tbody></table></div>
+  </section>
+  <p class="note">Simulated results only. Speeds, margins and thresholds are tunable constants at the top of the script. Green line = chosen path, faint lines = candidates, dashed rings = class-aware safety margins. A confirmed incident from the RoadAlert backend (ws://localhost:8000/ws/incidents) drops a stalled vehicle ahead in both worlds.</p>
+</main>
+<script>
+const VD=11, CLS={car:[4.2,1.8,.5],bus:[10.5,2.5,.8],auto:[2.8,1.4,.8],bike:[2,.7,1.1],ped:[.5,.5,1.6],cow:[1.8,.7,1.7],pothole:[1.4,1.4,.5]};
+const COL=['#4C8DFF','#cfd6e4','#c9463d','#8fb3a1','#e8e3d0'];
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+
+function setcs(a){const n=Math.max(1,Math.min(4,Math.round(a.l/a.w))),sp=n>1?(a.l-a.w)/(n-1):0;a.r=a.w/2;a.cs=[];
+  for(let i=0;i<n;i++){const d=(i-(n-1)/2)*sp;a.cs.push([Math.cos(a.th)*d,Math.sin(a.th)*d])}}
+function clr(ex,ey,eth,a,t){let m=1e9;
+  for(const d of [-1.2,1.2]){const cx=ex+Math.cos(eth)*d,cy=ey+Math.sin(eth)*d;
+    for(const c of a.cs){m=Math.min(m,Math.hypot(cx-(a.x+a.vx*t+c[0]),cy-(a.y+a.vy*t+c[1]))-.9-a.r)}}
+  return m}
+function ttc(e,ag){if(e.v<.5)return 99;
+  for(let t=.2;t<=8;t+=.2){const x=e.x+e.v*Math.cos(e.th)*t,y=e.y+e.v*Math.sin(e.th)*t;
+    for(const a of ag){if(a.cls!=='pothole'&&clr(x,y,e.th,a,t)<0)return t}}
+  return 99}
+function upd(a,dt,t){
+  if(a.tb!=null&&t>a.tb)a.vx=Math.max(0,a.vx-6*dt);
+  if(a.A){a.y=a.y0+a.A*Math.sin(a.w*t+a.ph);a.vy=a.A*a.w*Math.cos(a.w*t+a.ph);a.x+=a.vx*dt}
+  else{a.x+=a.vx*dt;a.y+=a.vy*dt}
+  if(Math.hypot(a.vx,a.vy)>.3)a.th=Math.atan2(a.vy,a.vx);
+  setcs(a)}
+
+const SC={
+ 'Sudden stop':s=>{s.add('car',48,0,10.5,{tb:1.5+s.r()*1.5});s.add('car',28,-4.2,8+s.r()*2);s.add('auto',75,4,6);s.add('bus',110,-3,7)},
+ 'Cow crossing':s=>{s.add('cow',55+s.r()*25,7.5,0,{vy:-1.2});s.add('ped',90,-7,0,{vy:1});s.add('car',40,4,7);s.add('auto',120,-4,6)},
+ 'Weaving two-wheelers':s=>{for(let i=0;i<5;i++)s.add('bike',30+i*24+s.r()*8,(s.r()-.5)*6,7+s.r()*2,{A:2+s.r()*1.5,w:1+s.r()*.6,ph:s.r()*6})},
+ 'Pothole cluster':s=>{for(let i=0;i<9;i++)s.add('pothole',35+i*20+s.r()*10,(s.r()-.5)*7,0);s.add('car',60,3.5,7)},
+ 'Dense mixed traffic':s=>{const c=['car','auto','bike','bus','car','bike','auto','car'];
+   for(let i=0;i<12;i++)s.add(c[i%8],25+i*17+s.r()*8,(s.r()-.5)*10.5,4+s.r()*4);
+   s.add('ped',70,-7,0,{vy:1.1});s.add('cow',150,7.5,0,{vy:-1})},
+ 'Stalled vehicle (RoadAlert hazard)':s=>{s.add('bus',85,.5,0);s.add('car',55,-3,6);s.add('auto',110,3,5)}
+};
+
+class Sim{
+  constructor(kind,scn,seed){
+    this.kind=kind;this.seed=seed;this.r=rng(seed*7919+13);this.t=0;this.pt=0;this.pa=0;this.kc=0;this.id=0;
+    this.ego={x:0,y:0,th:0,v:9,k:0};this.ag=[];this.hit=new Set();this.cp=null;this.crashed=false;this.done=false;
+    this.cmd={k:0,vt:9};this.best=null;this.fan=[];this.ms=1;
+    this.m={col:0,minC:99,minT:99,jj:0,jn:0,ms:0,mn:0,goal:false,T:0,mode:kind==='adaptive'?'cruise':'lane-follow'};
+    SC[scn](this)}
+  add(cls,x,y,vx,o={}){const d=CLS[cls],a=Object.assign({id:this.id++,cls,x,y,y0:y,vx,vy:0,th:0,l:d[0],w:d[1],m:d[2]},o);
+    if(Math.hypot(a.vx,a.vy)>.3)a.th=Math.atan2(a.vy,a.vx);setcs(a);this.ag.push(a)}
+  planB(){const e=this.ego;let vt=VD,lead=null,g0=99;
+    for(const a of this.ag){const gap=a.x-e.x-(a.l+4.2)/2;
+      if(a.cls!=='pothole'&&gap>-1&&Math.abs(a.y-e.y)<(a.w+1.8)/2+.4&&gap<g0){g0=gap;lead=a}}
+    if(lead){const rel=e.v-lead.vx,T=rel>.1?g0/rel:99;
+      if(T<.7||g0<2.5)vt=0;else if(g0<10)vt=Math.min(VD,lead.vx*.9)}
+    return{k:clamp(-.08*e.y-.6*e.th,-.1,.1),vt}}
+  planA(ag,T){const e=this.ego;
+    const dens=ag.filter(a=>Math.abs(a.x-e.x)<25&&Math.abs(a.y-e.y)<9).length;
+    const vd=VD*Math.max(.55,1-.035*dens),ms=1+.04*dens;this.ms=ms;
+    const mode=T>6?0:T>3?1:2;this.m.mode=['cruise','cautious','evasive'][mode];
+    const wC=[1,2,4][mode],cap=vd*[1,.75,.5][mode];
+    let best=null,bc=1e9;const fan=[];
+    for(let ki=-4;ki<=4;ki++){const k=ki*.03;
+      for(const f of [0,.4,.7,1]){const vt=cap*f;
+        let x=e.x,y=e.y,th=e.th,v=e.v,pen=0,ok=true;const pts=[];
+        for(let i=1;i<=12&&ok;i++){const t=i*.25;
+          v+=clamp(vt-v,-1.75,.625);th+=v*k*.25;x+=v*Math.cos(th)*.25;y+=v*Math.sin(th)*.25;pts.push([x,y]);
+          if(Math.abs(y)>6.2){ok=false;break}
+          for(const a of ag){const cl=clr(x,y,th,a,t),mg=a.m*ms+.12*t;
+            if(cl<.5*mg){ok=false;break}
+            if(cl<mg+1.5)pen+=(mg+1.5-cl)**2}}
+        if(!ok)continue;
+        const J=wC*.35*pen-.5*(x-e.x)+.6*Math.abs(y)+1.5*Math.abs(th)+10*Math.abs(k-this.kc);
+        fan.push(pts);
+        if(J<bc){bc=J;best={k,vt,pts}}}}
+    if(!best)best={k:0,vt:0,pts:[]};
+    this.kc=best.k;this.best=best;this.fan=fan;return best}
+  step(dt){
+    if(this.done)return;const e=this.ego,m=this.m;this.t+=dt;
+    for(const a of this.ag)upd(a,dt,this.t);
+    if(!this.crashed){
+      this.pt-=dt;
+      if(this.pt<=0){this.pt=.1;const t0=performance.now();
+        const near=this.ag.filter(a=>a.x>e.x-8&&a.x<e.x+70),T=ttc(e,near);
+        if(T<m.minT&&e.v>1)m.minT=T;
+        this.emg=this.kind==='adaptive'&&T<1;
+        this.cmd=this.kind==='adaptive'?this.planA(near,T):this.planB();
+        m.ms+=performance.now()-t0;m.mn++}
+      const vt=this.emg?0:this.cmd.vt;
+      e.k+=clamp(this.cmd.k-e.k,-.9*dt,.9*dt);
+      const a=clamp((vt-e.v)/.4,-7,2.5),j=(a-this.pa)/dt;m.jj+=j*j;m.jn++;this.pa=a;
+      e.v=Math.max(0,e.v+a*dt);e.th+=e.v*e.k*dt;e.x+=e.v*Math.cos(e.th)*dt;e.y+=e.v*Math.sin(e.th)*dt}
+    for(const a of this.ag){if(Math.abs(a.x-e.x)>15)continue;
+      const cl=clr(e.x,e.y,e.th,a,0);m.minC=Math.min(m.minC,cl);
+      if(cl<0&&!this.hit.has(a.id)){this.hit.add(a.id);m.col++;this.cp={x:e.x,y:e.y,t:this.t};
+        if(a.cls==='pothole')e.v*=.6;else{this.crashed=true;e.v=0}}}
+    if(e.x>240){m.goal=true;this.done=true}
+    else if(this.crashed&&this.t-this.cp.t>1.5)this.done=true;
+    else if(this.t>50)this.done=true;
+    m.T=this.t}
+  sum(){const m=this.m;return{col:m.col,minC:m.minC,minT:m.minT,jerk:m.jn?Math.sqrt(m.jj/m.jn):0,ms:m.mn?m.ms/m.mn:0,goal:m.goal,T:m.T}}
+}
+
+/* ---------- drawing ---------- */
+function sprite(g,a,S){
+  g.save();g.translate(a.X,a.Y);g.rotate(a.th);const l=a.l*S,w=a.w*S;
+  const box=(c,rad)=>{g.fillStyle=c;g.beginPath();g.roundRect(-l/2,-w/2,l,w,rad);g.fill()};
+  const cls=a.cls;
+  if(cls==='car'||cls==='ego'){if(cls==='ego'){g.shadowColor='#2BD9C4';g.shadowBlur=14}
+    box(cls==='ego'?'#2BD9C4':COL[a.id%5],4);g.shadowBlur=0;
+    g.fillStyle='#0b0e14cc';g.fillRect(l*.12,-w*.38,l*.2,w*.76);g.fillRect(-l*.36,-w*.38,l*.12,w*.76)}
+  else if(cls==='bus'){box('#d9463d',4);g.fillStyle='#f2a93b';g.fillRect(-l/2,-w*.16,l,w*.32);g.fillStyle='#0b0e14cc';g.fillRect(l*.38,-w*.4,l*.1,w*.8)}
+  else if(cls==='auto'){box('#f2c230',5);g.fillStyle='#1f6f43';g.fillRect(l*.15,-w/2,l*.35,w);g.fillStyle='#111';g.fillRect(-l*.4,-w*.3,l*.4,w*.6)}
+  else if(cls==='bike'){g.fillStyle='#8b93a5';g.fillRect(-l/2,-w*.15,l,w*.3);g.fillStyle='#e6b07a';g.beginPath();g.arc(0,0,.42*S,0,7);g.fill();g.fillStyle=COL[a.id%5];g.beginPath();g.arc(0,0,.26*S,0,7);g.fill()}
+  else if(cls==='ped'){g.fillStyle='#4C8DFF';g.beginPath();g.ellipse(0,0,.16*S,.32*S,0,0,7);g.fill();g.fillStyle='#e8c39e';g.beginPath();g.arc(0,0,.16*S,0,7);g.fill()}
+  else if(cls==='cow'){g.fillStyle='#e9e4d8';g.beginPath();g.ellipse(0,0,l/2,w/2,0,0,7);g.fill();g.fillStyle='#7a5a3a';g.beginPath();g.ellipse(-l*.12,0,l*.14,w*.3,0,0,7);g.fill();
+    g.fillStyle='#e9e4d8';g.beginPath();g.arc(l*.5,0,.24*S,0,7);g.fill();g.strokeStyle='#cfc6b0';g.lineWidth=2;g.beginPath();g.moveTo(l*.5,-.2*S);g.lineTo(l*.5+3,-.34*S);g.moveTo(l*.5,.2*S);g.lineTo(l*.5+3,.34*S);g.stroke()}
+  else{g.fillStyle='#0c0e13';g.strokeStyle='#3b4254';g.lineWidth=2;g.beginPath();g.ellipse(0,0,.7*S,.55*S,0,0,7);g.fill();g.stroke()}
+  g.restore()}
+function draw(s,cv,ad){
+  const g=cv.getContext('2d'),W=cv.width,H=cv.height,S=7,e=s.ego,ox=W*.25-e.x*S,oy=H/2,X=x=>x*S+ox,Y=y=>y*S+oy;
+  g.fillStyle='#141821';g.fillRect(0,0,W,H);
+  for(let i=Math.floor((e.x-40)/16);i<(e.x+110)/16;i++){const f=Math.abs(Math.sin(i*12.9898)*43758.5453)%1;
+    g.fillStyle=['#3a2f28','#2c3f36','#40303a'][((i%3)+3)%3];g.fillRect(X(i*16),Y((f>.5?1:-1)*(8.4+f*2.5))-5,21,10)}
+  g.fillStyle='#232835';g.fillRect(0,Y(-7),W,14*S);
+  g.strokeStyle='#3d4457';g.lineWidth=2;g.beginPath();g.moveTo(0,Y(-7));g.lineTo(W,Y(-7));g.moveTo(0,Y(7));g.lineTo(W,Y(7));g.stroke();
+  g.setLineDash([10,26]);g.lineDashOffset=-ox;g.globalAlpha=.4;g.beginPath();g.moveTo(0,Y(0));g.lineTo(W,Y(0));g.stroke();g.globalAlpha=1;g.setLineDash([]);
+  if(ad){g.lineWidth=1;g.strokeStyle='rgba(255,255,255,.07)';
+    for(const p of s.fan){g.beginPath();g.moveTo(X(e.x),Y(e.y));for(const q of p)g.lineTo(X(q[0]),Y(q[1]));g.stroke()}
+    if(s.best&&s.best.pts.length){g.strokeStyle='#2BB673';g.lineWidth=3;g.beginPath();g.moveTo(X(e.x),Y(e.y));for(const q of s.best.pts)g.lineTo(X(q[0]),Y(q[1]));g.stroke()}
+    g.lineWidth=1;g.setLineDash([3,4]);g.strokeStyle='rgba(242,169,59,.55)';
+    for(const a of s.ag){if(a.cls==='pothole'||Math.abs(a.x-e.x)>70)continue;g.beginPath();g.arc(X(a.x),Y(a.y),(Math.max(a.l,a.w)/2+a.m*s.ms)*S,0,7);g.stroke()}
+    g.setLineDash([])}
+  const all=s.ag.filter(a=>a.x>e.x-25&&a.x<e.x+80).sort((p,q)=>(p.cls==='pothole'?0:1)-(q.cls==='pothole'?0:1));
+  for(const a of all){sprite(g,{X:X(a.x),Y:Y(a.y),th:a.th,l:a.l,w:a.w,cls:a.cls,id:a.id},S)}
+  sprite(g,{X:X(e.x),Y:Y(e.y),th:e.th,l:4.2,w:1.8,cls:'ego',id:0},S);
+  if(s.cp&&s.t-s.cp.t<1.5){const k=(s.t-s.cp.t)/1.5;g.strokeStyle='#E23B4E';g.lineWidth=3;g.beginPath();g.arc(X(s.cp.x),Y(s.cp.y),14+k*40,0,7);g.stroke();
+    g.fillStyle='#E23B4E';g.font='bold 14px sans-serif';g.fillText('COLLISION',X(s.cp.x)-36,Y(s.cp.y)-30)}}
+function hud(s,el){const m=s.m;
+  el.innerHTML=`<div><b class="${m.col?'bad':''}">${m.col}</b><span>collisions</span></div><div><b>${m.minC>50?'–':m.minC.toFixed(2)}</b><span>min clearance m</span></div><div><b>${m.minT>50?'–':m.minT.toFixed(1)}</b><span>min TTC s</span></div><div><b>${(s.ego.v*3.6).toFixed(0)}</b><span>speed km/h</span></div><div><b>${m.mode}</b><span>mode</span></div><div><b>${s.sum().ms.toFixed(2)}</b><span>plan ms</span></div>`}
+
+/* ---------- app ---------- */
+const $=id=>document.getElementById(id),sel=$('scn'),spd=$('spd'),st=$('st');
+Object.keys(SC).forEach(k=>sel.add(new Option(k,k)));
+let A,B,seed=1,acc=0,last=performance.now(),wait=0,fr=0;
+const rows=[['scenario','planner','collision_runs_pct','min_clearance_m','min_ttc_s','jerk','plan_ms','goal_pct']];
+function reset(){A=new Sim('baseline',sel.value,seed);B=new Sim('adaptive',sel.value,seed);wait=0}
+function loop(ts){
+  const d=Math.min(.1,(ts-last)/1000);last=ts;acc+=d*(+spd.value);
+  while(acc>=.05){A.step(.05);B.step(.05);acc-=.05}
+  if(A.done&&B.done){wait+=d;if(wait>2){seed++;reset()}}
+  draw(A,$('c0'),0);draw(B,$('c1'),1);if(fr++%5===0){hud(A,$('m0'));hud(B,$('m1'))}
+  requestAnimationFrame(loop)}
+const mean=v=>v.length?v.reduce((p,q)=>p+q,0)/v.length:NaN,f=(v,n)=>isNaN(v)?'–':v.toFixed(n);
+async function compare(){
+  const scn=sel.value,N=30,res={baseline:[],adaptive:[]};$('cmp').disabled=true;
+  for(let sd=1;sd<=N;sd++){
+    for(const k of ['baseline','adaptive']){const s=new Sim(k,scn,sd);let n=0;while(!s.done&&n++<1500)s.step(.05);res[k].push(s.sum())}
+    if(sd%3===0){st.textContent=`running ${sd}/${N}`;await new Promise(r=>setTimeout(r))}}
+  for(const k of ['baseline','adaptive']){const r=res[k],
+    row=[scn,k,f(100*mean(r.map(x=>x.col>0?1:0)),0),f(mean(r.map(x=>x.minC).filter(x=>x<50)),2),f(mean(r.map(x=>x.minT).filter(x=>x<50)),1),f(mean(r.map(x=>x.jerk)),1),f(mean(r.map(x=>x.ms)),2),f(100*mean(r.map(x=>x.goal?1:0)),0)];
+    rows.push(row);const tr=$('tb').insertRow(0);row.forEach(c=>tr.insertCell().textContent=c)}
+  st.textContent='done';$('cmp').disabled=false}
+$('rst').onclick=()=>{seed=1;reset()};sel.onchange=()=>{seed=1;reset()};$('cmp').onclick=compare;
+$('csv').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'}));a.download='planner_results.csv';a.click()};
+try{const ws=new WebSocket('ws://localhost:8000/ws/incidents');
+  ws.onopen=()=>{st.textContent='RoadAlert backend linked'};
+  ws.onmessage=ev=>{try{if(JSON.parse(ev.data).event==='incident.confirmed'){for(const s of [A,B])s.add('car',s.ego.x+55,0,0)}}catch(_){}};
+  ws.onerror=()=>{}}catch(_){}
+reset();requestAnimationFrame(loop);
+</script>
+</body>
+</html>

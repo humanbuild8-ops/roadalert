@@ -71,7 +71,7 @@ function frame(ts) {
   lastTs = ts;
 
   cars.forEach(c => {
-    const inZone = incidentActive && c.x < INCIDENT_X && c.x > INCIDENT_X - 320 && c.lane === LANES[INCIDENT_LANE];
+    const inZone = incidentActive && c.x < INCIDENT_X && c.x > INCIDENT_X - 320;
     c.alerted = inZone;
     c.speed = inZone ? c.baseSpeed * 0.4 : c.baseSpeed;
     c.x += c.speed * dt;

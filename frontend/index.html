@@ -15,6 +15,7 @@
     <span class="topbar__route">NH-44 · northbound · km 214</span>
   </div>
   <div class="topbar__right">
+    <a href="planner.html" style="color:#F2A93B;text-decoration:none;border:1px solid #232838;padding:4px 10px;font-size:12px">Planner simulator →</a>
     <span class="topbar__mode" id="modeLabel">simulated feed</span>
     <span class="topbar__clock" id="clock">00:00:00</span>
   </div>
@@ -37,9 +38,10 @@
       <path id="divertPath" class="divert-path" d="" opacity="0"/>
       <g id="cars"></g>
       <g id="incidentMark" class="incident-mark" opacity="0">
+        <circle r="13" fill="#E23B4E"/>
         <circle r="13" class="incident-mark__ring"/>
         <circle r="13" class="incident-mark__ring incident-mark__ring--delay"/>
-        <text y="6" text-anchor="middle" class="incident-mark__glyph">!</text>
+        <text y="6" text-anchor="middle" class="incident-mark__glyph" fill="#fff">!</text>
       </g>
     </svg>
 

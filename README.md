@@ -102,3 +102,14 @@ Only an event packet ever leaves a vehicle: latitude, longitude,
 heading, an optional speed, a confidence score, and an incident type
 (see `IncidentCreate` in `app/models.py`). No video, image, or personal
 identifier is part of that payload or stored anywhere in this project.
+
+
+## Planner simulator (new)
+
+`frontend/planner.html` is a standalone simulator comparing a baseline planner with the adaptive planner on an unstructured Indian-style road (six scenarios, live metrics, a 30-run comparison table and CSV export). Open it at http://localhost:5500/planner.html. If the backend is running, a confirmed incident adds a stalled vehicle ahead in both worlds.
+
+## Folder layout
+
+- `frontend/` console (`index.html`) and planner simulator (`planner.html`)
+- `backend/` FastAPI incident API
+- `detection/` YOLO crash detection (`detect.py`, `synthetic_demo.py`)
